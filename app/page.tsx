@@ -18,12 +18,13 @@ import {
   Globe, 
   Sparkles, 
   RefreshCw, 
-  Download, 
-  Upload, 
   ShieldCheck, 
   X,
   Tag,
-  ArrowUpRight
+  ArrowUpRight,
+  KeyRound,
+  LogOut,
+  ShieldAlert
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { ShortLink } from '@/lib/types';
@@ -34,6 +35,12 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive' | 'protected'>('all');
   
+  // Admin Auth state
+  const [adminKey, setAdminKey] = useState<string>('');
+  const [isLocked, setIsLocked] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string>('');
+  const [keyInput, setKeyInput] = useState<string>('');
+
   // Modals state
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingLink, setEditingLink] = useState<ShortLink | null>(null);
@@ -53,16 +60,33 @@ export default function Dashboard() {
   const [formError, setFormError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Custom base domain setting
-  const [baseDomain, setBaseDomain] = useState('go.quickfever.com');
+  const baseDomain = 'go.quickfever.com';
 
-  const fetchLinks = async () => {
+  useEffect(() => {
+    const savedKey = localStorage.getItem('quickfever_admin_key') || '';
+    setAdminKey(savedKey);
+    fetchLinks(savedKey);
+  }, []);
+
+  const fetchLinks = async (key: string = adminKey) => {
     try {
       setLoading(true);
-      const res = await fetch('/api/links');
+      const res = await fetch('/api/links', {
+        headers: {
+          'x-admin-key': key,
+          'Authorization': `Bearer ${key}`
+        }
+      });
       const data = await res.json();
+
+      if (res.status === 401) {
+        setIsLocked(true);
+        return;
+      }
+
       if (data.success) {
         setLinks(data.links);
+        setIsLocked(false);
       }
     } catch (err) {
       console.error('Failed to fetch links:', err);
@@ -71,9 +95,31 @@ export default function Dashboard() {
     }
   };
 
-  useEffect(() => {
-    fetchLinks();
-  }, []);
+  const handleAdminLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    if (!keyInput.trim()) {
+      setAuthError('Please enter your admin secret key');
+      return;
+    }
+
+    localStorage.setItem('quickfever_admin_key', keyInput.trim());
+    setAdminKey(keyInput.trim());
+    fetchLinks(keyInput.trim());
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('quickfever_admin_key');
+    setAdminKey('');
+    setIsLocked(true);
+    setLinks([]);
+  };
+
+  const getHeaders = () => ({
+    'Content-Type': 'application/json',
+    'x-admin-key': adminKey,
+    'Authorization': `Bearer ${adminKey}`
+  });
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -87,7 +133,7 @@ export default function Dashboard() {
       setIsSubmitting(true);
       const res = await fetch('/api/links', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(),
         body: JSON.stringify({
           ...formData,
           tags: formData.tags ? formData.tags.split(',').map(t => t.trim()).filter(Boolean) : []
@@ -119,7 +165,7 @@ export default function Dashboard() {
       setIsSubmitting(true);
       const res = await fetch(`/api/links/${editingLink.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(),
         body: JSON.stringify({
           destinationUrl: formData.destinationUrl,
           title: formData.title,
@@ -148,7 +194,10 @@ export default function Dashboard() {
 
   const handleToggleStatus = async (id: string) => {
     try {
-      const res = await fetch(`/api/links/${id}`, { method: 'PATCH' });
+      const res = await fetch(`/api/links/${id}`, {
+        method: 'PATCH',
+        headers: getHeaders()
+      });
       const data = await res.json();
       if (data.success) {
         setLinks(prev => prev.map(l => l.id === id ? data.link : l));
@@ -161,7 +210,10 @@ export default function Dashboard() {
   const handleDelete = async (id: string, slug: string) => {
     if (!confirm(`Are you sure you want to delete short link "go.quickfever.com/${slug}"?`)) return;
     try {
-      const res = await fetch(`/api/links/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/links/${id}`, {
+        method: 'DELETE',
+        headers: getHeaders()
+      });
       const data = await res.json();
       if (data.success) {
         setLinks(prev => prev.filter(l => l.id !== id));
@@ -220,10 +272,66 @@ export default function Dashboard() {
     return true;
   });
 
-  // Calculate statistics
   const totalClicks = links.reduce((sum, l) => sum + l.clicks, 0);
   const activeCount = links.filter(l => l.isActive).length;
   const topLink = links.length > 0 ? [...links].sort((a, b) => b.clicks - a.clicks)[0] : null;
+
+  // LOCKED ADMIN SCREEN
+  if (isLocked) {
+    return (
+      <main className="min-h-screen flex items-center justify-center p-4">
+        <div className="glass-card max-w-md w-full p-8 text-center space-y-6 border border-white/10 shadow-2xl">
+          <div className="w-16 h-16 mx-auto bg-indigo-500/20 text-indigo-400 rounded-2xl flex items-center justify-center border border-indigo-500/30 shadow-lg shadow-indigo-500/20">
+            <KeyRound className="w-8 h-8" />
+          </div>
+
+          <div>
+            <h1 className="text-2xl font-bold text-white mb-2">Admin Dashboard Locked</h1>
+            <p className="text-gray-400 text-sm">
+              Enter your <span className="text-indigo-400 font-mono font-semibold">ADMIN_SECRET_KEY</span> to manage URL shortener links.
+            </p>
+          </div>
+
+          <form onSubmit={handleAdminLogin} className="space-y-4">
+            <div>
+              <input
+                type="password"
+                placeholder="Enter admin password..."
+                value={keyInput}
+                onChange={(e) => {
+                  setKeyInput(e.target.value);
+                  setAuthError('');
+                }}
+                className="w-full glass-input px-4 py-3 rounded-xl text-center text-lg placeholder-gray-500 focus:ring-2 focus:ring-indigo-500 transition-all"
+                autoFocus
+              />
+            </div>
+
+            {authError && (
+              <div className="flex items-center justify-center gap-2 text-rose-400 text-sm bg-rose-500/10 p-2.5 rounded-lg border border-rose-500/20">
+                <ShieldAlert className="w-4 h-4" />
+                <span>{authError}</span>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="w-full btn-gradient py-3.5 px-6 rounded-xl font-semibold flex items-center justify-center gap-2 transition-all"
+            >
+              <span>Unlock Admin Panel</span>
+              <ShieldCheck className="w-4 h-4" />
+            </button>
+          </form>
+
+          <div className="pt-4 border-t border-white/5">
+            <p className="text-xs text-gray-500">
+              Configured via <code className="text-indigo-300">ADMIN_SECRET_KEY</code> in Vercel Environment Variables.
+            </p>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <div className="min-h-screen pb-16">
@@ -256,6 +364,16 @@ export default function Dashboard() {
               <Plus className="w-4 h-4" />
               <span>Create Short Link</span>
             </button>
+
+            {adminKey && (
+              <button
+                onClick={handleLogout}
+                title="Lock Dashboard"
+                className="p-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/10 transition-all"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -309,7 +427,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Toolbar: Search, Filters & Actions */}
+        {/* Toolbar */}
         <div className="glass-card p-4 flex flex-col md:flex-row gap-4 items-center justify-between">
           <div className="relative w-full md:w-96">
             <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -340,7 +458,7 @@ export default function Dashboard() {
             </div>
 
             <button
-              onClick={fetchLinks}
+              onClick={() => fetchLinks()}
               title="Refresh Links"
               className="p-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 transition-all"
             >
@@ -387,7 +505,6 @@ export default function Dashboard() {
                 }`}
               >
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                  {/* Left Link Info */}
                   <div className="space-y-2 flex-1 min-w-0">
                     <div className="flex items-center gap-3 flex-wrap">
                       <a
@@ -400,7 +517,6 @@ export default function Dashboard() {
                         <ArrowUpRight className="w-4 h-4 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
                       </a>
 
-                      {/* Status badge */}
                       <span className={`px-2.5 py-0.5 text-xs rounded-full font-medium border ${
                         link.isActive 
                           ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' 
@@ -409,7 +525,6 @@ export default function Dashboard() {
                         {link.isActive ? 'Active' : 'Disabled'}
                       </span>
 
-                      {/* Password protected badge */}
                       {link.password && (
                         <span className="px-2.5 py-0.5 text-xs rounded-full font-medium bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1">
                           <Lock className="w-3 h-3" />
@@ -417,7 +532,6 @@ export default function Dashboard() {
                         </span>
                       )}
 
-                      {/* Expiration badge */}
                       {link.expiresAt && (
                         <span className="px-2.5 py-0.5 text-xs rounded-full font-medium bg-purple-500/10 text-purple-400 border border-purple-500/30 flex items-center gap-1">
                           <Calendar className="w-3 h-3" />
@@ -447,7 +561,6 @@ export default function Dashboard() {
                     )}
                   </div>
 
-                  {/* Right Actions & Clicks Stats */}
                   <div className="flex items-center justify-between lg:justify-end gap-4 border-t lg:border-t-0 border-white/10 pt-3 lg:pt-0">
                     <div className="text-left lg:text-right pr-4 lg:border-r border-white/10">
                       <div className="text-xl font-extrabold text-cyan-400 font-mono flex items-center gap-1 lg:justify-end">
@@ -523,7 +636,7 @@ export default function Dashboard() {
       {/* CREATE MODAL */}
       {isCreateOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-          <div className="glass-card max-w-lg w-full p-6 space-y-5 border border-white/15 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200">
+          <div className="glass-card max-w-lg w-full p-6 space-y-5 border border-white/15 shadow-2xl relative">
             <div className="flex items-center justify-between border-b border-white/10 pb-4">
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
                 <Plus className="w-5 h-5 text-indigo-400" />

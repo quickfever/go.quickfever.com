@@ -3,8 +3,24 @@ import { getAllLinks, saveLink, getLinkBySlug } from '@/lib/storage';
 import { ShortLink } from '@/lib/types';
 import { nanoid } from 'nanoid';
 
+// Helper to verify admin key if ADMIN_SECRET_KEY env variable is configured
+function isAuthorized(request: Request): boolean {
+  const secretKey = process.env.ADMIN_SECRET_KEY;
+  if (!secretKey) return true; // If no secret key set, public mode enabled
+
+  const authHeader = request.headers.get('Authorization') || '';
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+  const customHeader = request.headers.get('x-admin-key') || '';
+
+  return token === secretKey || customHeader === secretKey;
+}
+
 export async function GET(request: Request) {
   try {
+    if (!isAuthorized(request)) {
+      return NextResponse.json({ success: false, error: 'Unauthorized admin access' }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     const query = searchParams.get('q')?.toLowerCase() || '';
 
@@ -27,6 +43,10 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    if (!isAuthorized(request)) {
+      return NextResponse.json({ success: false, error: 'Unauthorized admin access' }, { status: 401 });
+    }
+
     const body = await request.json();
     const { destinationUrl, slug: customSlug, title, description, expiresAt, password, tags } = body;
 
@@ -34,7 +54,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: 'Destination URL is required' }, { status: 400 });
     }
 
-    // Format & validate URL
     let formattedUrl = destinationUrl.trim();
     if (!/^https?:\/\//i.test(formattedUrl)) {
       formattedUrl = 'https://' + formattedUrl;
@@ -46,16 +65,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: 'Invalid destination URL format' }, { status: 400 });
     }
 
-    // Generate or format slug
     let finalSlug = customSlug ? customSlug.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '') : '';
     if (!finalSlug) {
       finalSlug = nanoid(6).toLowerCase();
     }
 
-    // Check if slug already exists
     const existing = await getLinkBySlug(finalSlug);
     if (existing) {
-      return NextResponse.json({ success: false, error: `Slug "${finalSlug}" is already taken. Please choose another.` }, { status: 409 });
+      return NextResponse.json({ success: false, error: `Slug "${finalSlug}" is already taken.` }, { status: 409 });
     }
 
     const newLink: ShortLink = {

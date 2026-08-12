@@ -1,11 +1,26 @@
 import { NextResponse } from 'next/server';
 import { updateLink, deleteLink, getAllLinks } from '@/lib/storage';
 
+function isAuthorized(request: Request): boolean {
+  const secretKey = process.env.ADMIN_SECRET_KEY;
+  if (!secretKey) return true;
+
+  const authHeader = request.headers.get('Authorization') || '';
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+  const customHeader = request.headers.get('x-admin-key') || '';
+
+  return token === secretKey || customHeader === secretKey;
+}
+
 export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    if (!isAuthorized(request)) {
+      return NextResponse.json({ success: false, error: 'Unauthorized admin access' }, { status: 401 });
+    }
+
     const { id } = await params;
     const body = await request.json();
     const { destinationUrl, title, description, isActive, expiresAt, password, tags } = body;
@@ -48,6 +63,10 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    if (!isAuthorized(request)) {
+      return NextResponse.json({ success: false, error: 'Unauthorized admin access' }, { status: 401 });
+    }
+
     const { id } = await params;
     const success = await deleteLink(id);
     if (!success) {
@@ -64,6 +83,10 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    if (!isAuthorized(request)) {
+      return NextResponse.json({ success: false, error: 'Unauthorized admin access' }, { status: 401 });
+    }
+
     const { id } = await params;
     const links = await getAllLinks();
     const existing = links.find(l => l.id === id || l.slug === id);
